@@ -1,10 +1,12 @@
 using BlazorWasmESP32S3WROOM;
+using BlazorWasmESP32S3WROOM.Services;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using SpawnDev.BlazorJS;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.Services.AddBlazorJSRuntime();
+builder.Services.AddScoped<BleDeviceService>();
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
 builder.RootComponents.Add<App>("#app");
