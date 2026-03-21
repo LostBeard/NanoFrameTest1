@@ -11,7 +11,7 @@ This solution connects a **Freenove ESP32-S3-WROOM** camera dev board to a **Bla
 ## Architecture
 
 ```
-┌─────────────────────────┐         BLE          ┌──────────────────────────┐
+┌─────────────────────────┐         BLE           ┌──────────────────────────┐
 │   ESP32-S3-WROOM        │◄─────────────────────►│   Blazor WASM App        │
 │   (nanoFramework)       │                       │   (Browser / PWA)        │
 │                         │                       │                          │
@@ -24,10 +24,10 @@ This solution connects a **Freenove ESP32-S3-WROOM** camera dev board to a **Bla
           │                                                   │
           │  WiFi (after BLE config)                          │
           ▼                                                   │
-  ┌───────────────┐                                           │
+  ┌────────────────┐                                          │
   │  Camera Stream │◄──────────── HTTP/MJPEG ─────────────────┘
   │  (HTTP Server) │
-  └───────────────┘
+  └────────────────┘
 ```
 
 ### Communication Flow
