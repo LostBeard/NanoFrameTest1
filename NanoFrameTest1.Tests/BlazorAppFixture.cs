@@ -12,7 +12,6 @@ namespace NanoFrameTest1.Tests;
 /// </summary>
 public sealed class BlazorAppFixture : IAsyncDisposable
 {
-    const string BlazorProjectDir = "../BlazorWasmESP32S3WROOM";
     const string TargetFramework = "net10.0";
     const int Port = 5210;
     const string CertPassword = "unittests";
@@ -46,8 +45,7 @@ public sealed class BlazorAppFixture : IAsyncDisposable
     {
         if (_started) return;
 
-        var projectDir = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", BlazorProjectDir));
+        var projectDir = ResolveBlazorWasmProjectDirectory();
 
         var certPath = Path.Combine(AppContext.BaseDirectory, "assets", "testcert.pfx");
         if (!File.Exists(certPath))
@@ -228,5 +226,25 @@ public sealed class BlazorAppFixture : IAsyncDisposable
 
         WasmDebugSandboxPath = null;
         _started = false;
+    }
+
+    /// <summary>
+    /// Walks up from <see cref="AppContext.BaseDirectory"/> until <c>BlazorWasmESP32S3WROOM.csproj</c>
+    /// is found so tests work from any output layout (e.g. <c>dotnet test --artifacts-path</c>).
+    /// </summary>
+    static string ResolveBlazorWasmProjectDirectory()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var csproj = Path.Combine(dir.FullName, "BlazorWasmESP32S3WROOM", "BlazorWasmESP32S3WROOM.csproj");
+            if (File.Exists(csproj))
+                return Path.GetDirectoryName(csproj)!;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not find BlazorWasmESP32S3WROOM/BlazorWasmESP32S3WROOM.csproj by walking up from " +
+            AppContext.BaseDirectory);
     }
 }

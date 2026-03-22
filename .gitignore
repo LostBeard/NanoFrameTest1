@@ -63,6 +63,10 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Isolated `dotnet test --artifacts-path` output (avoids testhost locking bin\Debug)
+.artifacts-smoke/
+.artifacts-verify/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
@@ -237,6 +241,8 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+# Exception: Playwright test host dev certificate (same as PlaywrightMultiTest; password is `unittests` in code).
+!NanoFrameTest1.Tests/assets/testcert.pfx
 *.publishsettings
 orleans.codegen.cs
 

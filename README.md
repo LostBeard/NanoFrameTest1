@@ -177,15 +177,30 @@ dotnet build BlazorWasmESP32S3WROOM/BlazorWasmESP32S3WROOM.csproj
 
 ### Playwright tests (Blazor)
 
-The UI under test is **Blazor WebAssembly**. WASM must be **served** (not opened as static files from disk). The test project’s `BlazorAppFixture` starts **`dotnet run`** on `BlazorWasmESP32S3WROOM`, which uses the **Blazor WASM dev server** (`WebAssembly.DevServer`) to host `_framework/`, the runtime, and `wwwroot` at `http://localhost:5210`. NUnit + Playwright then drive Chrome against that URL.
+The UI under test is **Blazor WebAssembly**. WASM must be **served** over HTTP(S) with correct `_framework/` assets (not opened as raw files from disk).
 
-You can instead run the app yourself (`dotnet run` in `BlazorWasmESP32S3WROOM`) before tests; if port 5210 already responds, the fixture reuses it.
+**How this repo hosts it:** `NanoFrameTest1.Tests` / `BlazorAppFixture` runs **`dotnet publish -c Release`** on `BlazorWasmESP32S3WROOM`, then starts an in-process **Kestrel** HTTPS static host (dev PFX `assets/testcert.pfx`, password `unittests`) at **`https://localhost:5210/`**. That matches the idea used in **PlaywrightMultiTest** (publish + static server) and avoids stale `dotnet run` dev-server fingerprints on the same port.
+
+**Test-only endpoints** on the same origin (local Playwright only):
+
+- **HTTP** under `/__wasmtest/*` — logging, sandboxed filesystem under `%TEMP%\NanoFrameTest1\wasm-sandbox\…` (see `WasmTestHostMiddleware`).
+- **SignalR** at `/__wasmtest/signalr` — bidirectional hub `WasmDebugHub`: the Blazor app uses `WasmTestDebugHubClient` (connects when the hub exists; no-op when deployed elsewhere). From tests, use `TestBase.WasmDebugHub` (`IHubContext<WasmDebugHub>`) to `SendAsync("ClientInvoke", method, json)` or `SendAsync("ClientNotify", text)` into the browser.
 
 If **Visual Studio** (or another `testhost`) still has the test DLL loaded, `dotnet test` can fail to copy `NanoFrameTest1.Tests.dll` — stop the other test run, or rely on `.runsettings` (**single test worker**) in the test project to reduce contention.
 
 ```bash
 dotnet test NanoFrameTest1.Tests/NanoFrameTest1.Tests.csproj --filter "Category=Smoke"
 ```
+
+If `testhost` locks `bin\Debug\…\NanoFrameTest1.Tests.dll`, use a separate output root (from repo `NanoFrameTest1/`):
+
+```bash
+dotnet test NanoFrameTest1.Tests/NanoFrameTest1.Tests.csproj -c Release --filter "Category=Smoke" --artifacts-path .artifacts-smoke
+```
+
+`BlazorAppFixture` finds `BlazorWasmESP32S3WROOM` by walking up from the test assembly directory, so `--artifacts-path` still resolves the Blazor project correctly.
+
+Smoke tests include **SignalR** checks (`WasmDebugHub_ClientConnects_*`, round-trip via `SmokeTestRoundTrip`); the first run pays a **Release publish** of the Blazor project.
 
 **Web Bluetooth (Freenove ESP32-S3-WROOM):** Playwright cannot choose a device for you. With the board powered and this firmware deployed, run **headed** Chrome and pick the ESP32 when the list opens:
 

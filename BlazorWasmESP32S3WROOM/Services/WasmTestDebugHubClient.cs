@@ -51,6 +51,10 @@ public sealed class WasmTestDebugHubClient : IAsyncDisposable
         {
             await conn.StartAsync().ConfigureAwait(false);
             _connection = conn;
+            RegisterClientHandler("SmokeTestRoundTrip", async _ =>
+            {
+                await LogAsync("[smoke-handler] ok").ConfigureAwait(false);
+            });
         }
         catch
         {

@@ -47,6 +47,8 @@ namespace BlazorWasmESP32S3WROOM.Services
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
+        /// <summary>Fired during <see cref="ConnectAsync"/> so the UI can show what is happening (GATT can take tens of seconds).</summary>
+        public event Action<string>? OnConnectionProgress;
         public event Action<WifiStatus>? OnWifiStatusChanged;
         public event Action<List<WifiNetwork>>? OnWifiScanResults;
         public event Action<string>? OnDebugLog;
@@ -67,6 +69,7 @@ namespace BlazorWasmESP32S3WROOM.Services
             using var navigator = _js.Get<Navigator>("navigator");
             using var bluetooth = navigator.Bluetooth!;
 
+            Report("Opening device picker — choose ESP32-S3-WROOM (firmware must be running).");
             _device = await bluetooth.RequestDevice(new BluetoothDeviceOptions
             {
                 AcceptAllDevices = true,
@@ -75,6 +78,7 @@ namespace BlazorWasmESP32S3WROOM.Services
 
             _device.OnGATTServerDisconnected += OnGATTDisconnected;
             Console.WriteLine($"[BLE] Device selected: {_device.Name ?? "(no name)"}");
+            Report($"Device selected: {_device.Name ?? "(no name)"}. Establishing GATT…");
 
             try
             {
@@ -103,6 +107,7 @@ namespace BlazorWasmESP32S3WROOM.Services
                 try
                 {
                     var gatt = _device!.GATT!;
+                    Report($"GATT connect (attempt {attempt + 1}/3)…");
                     _server = await gatt.Connect();
                     Console.WriteLine($"[BLE] GATT connected: {_server.Connected} (attempt {attempt + 1})");
 
@@ -114,25 +119,30 @@ namespace BlazorWasmESP32S3WROOM.Services
                     if (!_server.Connected)
                     {
                         Console.WriteLine("[BLE] Link dropped during settle delay; reconnecting…");
+                        Report("Link dropped during settle — retrying…");
                         continue;
                     }
 
+                    Report("Discovering WiFi + debug service (a0e4f2c0-0001-…)…");
                     _primaryService = await WithTimeout(
                         _server.GetPrimaryService(WifiServiceUuid),
                         serviceTimeoutMs,
                         "GetPrimaryService(WiFi)");
 
                     await Task.Delay(120);
+                    Report("Reading WiFi status characteristic…");
                     _wifiStatusChar = await WithTimeout(
                         _primaryService.GetCharacteristic(WifiStatusUuid),
                         15000,
                         "GetCharacteristic(WiFi status)");
                     await Task.Delay(80);
+                    Report("Reading WiFi scan characteristic…");
                     _wifiScanChar = await WithTimeout(
                         _primaryService.GetCharacteristic(WifiScanUuid),
                         15000,
                         "GetCharacteristic(WiFi scan)");
                     await Task.Delay(80);
+                    Report("Reading debug log characteristic…");
                     _debugLogChar = await WithTimeout(
                         _primaryService.GetCharacteristic(DebugLogOutputUuid),
                         15000,
@@ -141,6 +151,7 @@ namespace BlazorWasmESP32S3WROOM.Services
                     _wifiStatusChar.OnCharacteristicValueChanged += OnWifiStatusNotification;
                     _debugLogChar.OnCharacteristicValueChanged += OnDebugLogNotification;
 
+                    Report("Subscribing to WiFi status + debug notifications…");
                     await _wifiStatusChar.StartNotifications();
                     await Task.Delay(150);
                     await _debugLogChar.StartNotifications();
@@ -149,16 +160,19 @@ namespace BlazorWasmESP32S3WROOM.Services
                     if (!_server.Connected)
                         throw new InvalidOperationException("GATT disconnected after starting notifications.");
 
+                    Report("Reading initial WiFi status…");
                     using var initial = await WithTimeout(_wifiStatusChar.ReadValue(), 15000, "ReadValue(WiFi status)");
                     ParseWifiStatusFromBuffer(initial.Buffer);
 
                     _scanNotificationsStarted = false;
+                    Report("BLE session ready — WiFi and debug console are available.");
                     return;
                 }
                 catch (Exception ex)
                 {
                     last = ex;
                     Console.WriteLine($"[BLE] Session attempt {attempt + 1} failed: {ex.Message}");
+                    Report($"Attempt {attempt + 1} failed: {ex.Message}");
                     await DisposePartialGattStateAsync();
                     if (_server?.Connected == true)
                     {
@@ -303,6 +317,12 @@ namespace BlazorWasmESP32S3WROOM.Services
             using var cmdChar = await _primaryService.GetCharacteristic(DebugCommandInputUuid);
             var payload = Encoding.UTF8.GetBytes(command);
             await cmdChar.WriteValueWithResponse(payload);
+        }
+
+        void Report(string message)
+        {
+            Console.WriteLine($"[BLE] {message}");
+            OnConnectionProgress?.Invoke(message);
         }
 
         void OnGATTDisconnected(Event e) => OnDisconnected?.Invoke();

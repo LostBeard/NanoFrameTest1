@@ -12,16 +12,27 @@
 else
 {
     <div class="mb-3">
-        <button class="btn btn-primary" disabled="@_bleService.IsConnected" @onclick="ConnectAsync">
-            Connect to ESP32
+        <button class="btn btn-primary" disabled="@(_bleService.IsConnected || _connecting)" @onclick="ConnectAsync">
+            @(_connecting ? "Connecting…" : "Connect to ESP32")
         </button>
-        <button class="btn btn-outline-secondary" disabled="@(!_bleService.IsConnected)" @onclick="DisconnectAsync">
+        <button class="btn btn-outline-secondary" disabled="@(!_bleService.IsConnected || _connecting)" @onclick="DisconnectAsync">
             Disconnect
         </button>
     </div>
 
+    @if (_connecting && !string.IsNullOrEmpty(_bleProgress))
+    {
+        <div class="alert alert-info mb-3" role="status" aria-live="polite">
+            <strong>Progress:</strong> @_bleProgress
+        </div>
+    }
+
     <div class="alert @(_bleService.IsConnected ? "alert-success" : "alert-secondary")">
         <strong>BLE:</strong> @(_bleService.IsConnected ? $"Connected to {_bleService.DeviceName}" : "Disconnected")
+        @if (_bleService.IsConnected && _bleService.IsGattReady)
+        {
+            <span class="ms-2 text-success">GATT ready (WiFi + debug).</span>
+        }
     </div>
 
     @if (_bleService.IsConnected && _bleService.IsGattReady)
@@ -105,6 +116,8 @@ else
     string _logText = "";
     string _error = "";
     bool _scanning;
+    bool _connecting;
+    string _bleProgress = "";
 
     string WifiStatusAlertClass => _wifiStatus.State switch
     {
@@ -121,6 +134,13 @@ else
         _bleService.OnWifiStatusChanged += OnWifiStatusChanged;
         _bleService.OnWifiScanResults += OnWifiScanResults;
         _bleService.OnDebugLog += OnDebugLog;
+        _bleService.OnConnectionProgress += OnBleConnectionProgress;
+    }
+
+    void OnBleConnectionProgress(string message)
+    {
+        _bleProgress = message;
+        _ = InvokeAsync(StateHasChanged);
     }
 
     void OnBleConnected() => InvokeAsync(StateHasChanged);
@@ -158,6 +178,9 @@ else
     {
         _error = "";
         _logText = "";
+        _connecting = true;
+        _bleProgress = "";
+        StateHasChanged();
         try
         {
             await _bleService.ConnectAsync();
@@ -165,6 +188,11 @@ else
         catch (Exception ex)
         {
             _error = $"Connection failed: {ex.Message}";
+        }
+        finally
+        {
+            _connecting = false;
+            _bleProgress = "";
         }
         StateHasChanged();
     }
@@ -263,6 +291,7 @@ else
         _bleService.OnWifiStatusChanged -= OnWifiStatusChanged;
         _bleService.OnWifiScanResults -= OnWifiScanResults;
         _bleService.OnDebugLog -= OnDebugLog;
+        _bleService.OnConnectionProgress -= OnBleConnectionProgress;
         await ValueTask.CompletedTask;
     }
 }

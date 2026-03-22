@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.SignalR;
+
 namespace NanoFrameTest1.Tests;
 
 /// <summary>
@@ -71,5 +73,36 @@ public class SmokeTests : TestBase
     {
         var debugCard = Page.Locator("text=Debug Console");
         await Expect(debugCard).ToHaveCountAsync(0);
+    }
+
+    [Test]
+    public async Task WasmDebugHub_ClientConnects_AndLogsToHost()
+    {
+        Assert.That(WasmDebugHub, Is.Not.Null, "Test host should expose IHubContext after fixture start.");
+        for (var i = 0; i < 60; i++)
+        {
+            if (GetWasmHostLogs().Any(static l => l.Contains("[hub] connected", StringComparison.Ordinal)))
+                return;
+            await Task.Delay(100).ConfigureAwait(false);
+        }
+
+        Assert.Fail("Blazor did not open a SignalR connection to /__wasmtest/signalr within ~6s.");
+    }
+
+    [Test]
+    public async Task WasmDebugHub_ServerClientInvoke_RoundTrip()
+    {
+        Assert.That(WasmDebugHub, Is.Not.Null);
+        await WasmDebugHub!.Clients.All.SendAsync("ClientInvoke", "SmokeTestRoundTrip", "{}")
+            .ConfigureAwait(false);
+
+        for (var i = 0; i < 60; i++)
+        {
+            if (GetWasmHostLogs().Any(static l => l.Contains("[smoke-handler] ok", StringComparison.Ordinal)))
+                return;
+            await Task.Delay(100).ConfigureAwait(false);
+        }
+
+        Assert.Fail("Client did not run SmokeTestRoundTrip handler (no [smoke-handler] ok in host log).");
     }
 }

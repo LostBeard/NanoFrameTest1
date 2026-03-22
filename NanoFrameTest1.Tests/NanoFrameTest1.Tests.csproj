@@ -14,8 +14,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Dev-only HTTPS cert for BlazorStaticHost (password in BlazorAppFixture). Not a secret; keep local copy under assets/. -->
+    <None Remove="assets\testcert.pfx" />
     <Content Include="assets\testcert.pfx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 

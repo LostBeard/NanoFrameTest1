@@ -43,5 +43,9 @@ public class BleManualConnectionTests : TestBase
         Assert.That(completeMsg, Is.Not.Null, "Expected [BLE] Connection complete …");
         Assert.That(completeMsg, Does.Contain("Server connected: True"),
             "GATT should stay connected after service discovery");
+
+        await Expect(Page.GetByText("WiFi Configuration")).ToBeVisibleAsync(new() { Timeout = 30_000 });
+        await Expect(Page.GetByText("Debug Console")).ToBeVisibleAsync(new() { Timeout = 30_000 });
+        await Expect(Page.GetByText("GATT ready (WiFi + debug).")).ToBeVisibleAsync(new() { Timeout = 30_000 });
     }
 }
