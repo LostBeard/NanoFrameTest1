@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Playwright;
 
 namespace NanoFrameTest1.Tests;
@@ -6,8 +7,9 @@ namespace NanoFrameTest1.Tests;
 /// Base class for all Playwright-based tests against the **hosted** Blazor WASM app.
 /// <para>
 /// <see cref="BlazorAppFixture"/> must be running (see <c>OneTimeSetUp</c>): it hosts the WASM
-/// project at <c>http://localhost:5210</c>. These tests are not “in” the WASM assembly — they
-/// automate Chromium against that URL.
+/// project at <c>https://localhost:5210/</c> and exposes <c>/__wasmtest/*</c> for client logging
+/// and sandboxed file I/O. These tests are not “in” the WASM assembly — they automate Chromium
+/// against that URL.
 /// </para>
 /// One browser per test class, one context+page per test.
 ///
@@ -22,6 +24,19 @@ public class TestBase
     // App fixture is shared across ALL test classes (static, never disposed mid-run)
     static readonly BlazorAppFixture _appFixture = new();
     protected string BaseUrl => _appFixture.BaseUrl;
+
+    /// <summary>Host filesystem sandbox the Blazor app can use via <c>fetch('/__wasmtest/fs/...')</c>.</summary>
+    protected static string? WasmDebugSandboxPath => _appFixture.WasmDebugSandboxPath;
+
+    protected static IReadOnlyList<string> GetWasmHostLogs() => _appFixture.GetWasmHostLogSnapshot();
+
+    protected static void ClearWasmHostLogs() => _appFixture.ClearWasmHostLog();
+
+    /// <summary>
+    /// Push to the Blazor app: <c>await WasmDebugHub!.Clients.All.SendAsync("ClientInvoke", method, json)</c>
+    /// or <c>SendAsync("ClientNotify", text)</c>.
+    /// </summary>
+    protected static IHubContext<WasmDebugHub>? WasmDebugHub => _appFixture.WasmDebugHubContext;
 
     IPlaywright? _playwright;
     IBrowser? _browser;
@@ -40,24 +55,7 @@ public class TestBase
     [OneTimeSetUp]
     public async Task OneTimeSetup()
     {
-        // Build the Blazor app
-        var projectDir = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", "../BlazorWasmESP32S3WROOM"));
-
-        var build = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = "build -v q",
-            WorkingDirectory = projectDir,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        });
-        build?.WaitForExit(120000);
-        if (build?.ExitCode != 0)
-            throw new InvalidOperationException($"Blazor project build failed (exit {build?.ExitCode}). Check {projectDir}");
-
-        _appFixture.EnsureStarted();
+        await _appFixture.EnsureStartedAsync().ConfigureAwait(false);
 
         // One browser per test class
         _playwright = await Playwright.CreateAsync();

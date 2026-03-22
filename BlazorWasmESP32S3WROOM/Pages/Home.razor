@@ -1,5 +1,4 @@
 @page "/"
-@using BlazorWasmESP32S3WROOM.Services
 @implements IAsyncDisposable
 
 <PageTitle>ESP32-S3 Dashboard</PageTitle>
@@ -96,6 +95,7 @@ else
 
 @code {
     [Inject] BleDeviceService _bleService { get; set; } = default!;
+    [Inject] WasmTestDebugHubClient WasmTestDebugHub { get; set; } = default!;
 
     WifiStatus _wifiStatus = new();
     List<WifiNetwork> _networks = new();
@@ -150,6 +150,7 @@ else
         _logText += line + "\n";
         if (_logText.Length > 16000)
             _logText = _logText[^12000..];
+        _ = WasmTestDebugHub.LogAsync(line);
         InvokeAsync(StateHasChanged);
     }
 
