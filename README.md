@@ -175,8 +175,66 @@ dotnet build BlazorWasmESP32S3WROOM/BlazorWasmESP32S3WROOM.csproj
 # nanoFramework project — build via Visual Studio (requires nanoFramework extension)
 ```
 
+### Playwright tests (Blazor)
+
+The UI under test is **Blazor WebAssembly**. WASM must be **served** (not opened as static files from disk). The test project’s `BlazorAppFixture` starts **`dotnet run`** on `BlazorWasmESP32S3WROOM`, which uses the **Blazor WASM dev server** (`WebAssembly.DevServer`) to host `_framework/`, the runtime, and `wwwroot` at `http://localhost:5210`. NUnit + Playwright then drive Chrome against that URL.
+
+You can instead run the app yourself (`dotnet run` in `BlazorWasmESP32S3WROOM`) before tests; if port 5210 already responds, the fixture reuses it.
+
+If **Visual Studio** (or another `testhost`) still has the test DLL loaded, `dotnet test` can fail to copy `NanoFrameTest1.Tests.dll` — stop the other test run, or rely on `.runsettings` (**single test worker**) in the test project to reduce contention.
+
+```bash
+dotnet test NanoFrameTest1.Tests/NanoFrameTest1.Tests.csproj --filter "Category=Smoke"
+```
+
+**Web Bluetooth (Freenove ESP32-S3-WROOM):** Playwright cannot choose a device for you. With the board powered and this firmware deployed, run **headed** Chrome and pick the ESP32 when the list opens:
+
+```powershell
+dotnet test NanoFrameTest1.Tests/NanoFrameTest1.Tests.csproj --filter "Category=BLEManual"
+```
+
+Optional checks without opening the chooser: `--filter "Category=BLE"`.
+
 ## Reference Projects
-- **[BlazorWebBluetoothDemo](https://github.com/LostBeard/BlazorWebBluetoothDemo)** — Previous BLE demo connecting Blazor WASM to this same ESP32 board using SpawnDev.BlazorJS Web Bluetooth. Used PlatformIO/Arduino firmware. This project ports the ESP32 side to nanoFramework C#.
+
+### BlazorWebBluetoothDemo (same board, PlatformIO — your working reference)
+
+Local clone (Web Bluetooth client + ESP32 firmware):
+
+`D:\users\tj\Projects\BlazorWebBluetoothDemo\BlazorWebBluetoothDemo`
+
+| Piece | PlatformIO / Arduino (`ESP32BLEApp/src/main.cpp`) | This repo (nanoFramework) |
+|-------|-----------------------------------------------------|---------------------------|
+| Blazor UI | `BlazorWebBluetoothDemo/Pages/Home.razor` | `BlazorWasmESP32S3WROOM/Pages/Home.razor` |
+| Connect flow | `RequestDevice` → `device.gatt.connect()` → `getPrimaryService` → one notify + read | Same Web Bluetooth pattern in `Services/BleDeviceService.cs` |
+| Primary service UUID | `19b10000-e8f2-537e-4f6c-d104768a1214` | `a0e4f2c0-0001-1000-8000-00805f9b34fb` (`BleUuids.WifiServiceUuid`) |
+| Other characteristics | Sensor notify `19b10001-…`, LED write `19b10002-…` | WiFi + debug characteristics under `BleUuids` (see `BleUuids.cs`) |
+| Advertising | Arduino adds `SERVICE_UUID` to the BLE advertisement (`pAdvertising->addServiceUUID`) | nanoFramework `GattServiceProvider.StartAdvertising` (stack-dependent) |
+| Device name | `BLEDevice::init("ESP32")` | `BluetoothLEServer.Instance.DeviceName = "ESP32-S3-WROOM"` |
+
+The GitHub repo is the same content as the local demo: **[BlazorWebBluetoothDemo](https://github.com/LostBeard/BlazorWebBluetoothDemo)**. That project is the known-good Blazor ↔ ESP32 BLE pairing when the board runs **PlatformIO** firmware; **NanoFrameTest1** must use the **nanoFramework** UUIDs and deployed managed app, not the `19b10000` service, unless you reflash the old sketch.
+
+### SpawnDev.MatrixLEDDisplay (Web Bluetooth + Blazor — different hardware)
+
+Local repo (library + demo app for a consumer LED matrix over BLE):
+
+`D:\users\tj\Projects\SpawnDev.MatrixLEDDisplay\SpawnDev.MatrixLEDDisplay`
+
+- **What it is:** Blazor WebAssembly client for the Merkury “MI Matrix Display” (16×16 LED panel), using **SpawnDev.BlazorJS** and the same general Web Bluetooth flow (`RequestDevice`, GATT `Connect`, `GetPrimaryService`, characteristics). See `SpawnDev.MatrixLEDDisplay/MIMatrixDisplay.cs` and `SpawnDev.MatrixLEDDisplay.Demo/Pages/Home.razor`.
+- **Not ESP32:** Primary service UUID there is `0000ffd0-0000-1000-8000-00805f9b34fb` (vendor matrix protocol), unrelated to `BleUuids` in this firmware project. Useful mainly as another **working Blazor + Web Bluetooth** reference in the SpawnDev stack.
+- **Online:** [SpawnDev.MatrixLEDDisplay on GitHub](https://github.com/LostBeard/SpawnDev.MatrixLEDDisplay) · [hosted demo](https://lostbeard.github.io/SpawnDev.MatrixLEDDisplay/).
+
+### SpawnDev.ILGPU — PlaywrightMultiTest (multi-target Playwright runner)
+
+Local console test harness that drives **both** native desktop test exes and **Blazor WebAssembly** under Playwright + NUnit:
+
+`D:\users\tj\Projects\SpawnDev.ILGPU\SpawnDev.ILGPU\PlaywrightMultiTest`
+
+- **Idea:** `ProjectDiscovery` finds projects marked with `<PlaywrightMultiTest>` in their `.csproj`; **console** targets run as published subprocesses per test; **Blazor WASM** targets are published, served over HTTPS, and driven in Chromium (e.g. WebGPU flags). Tests surface through NUnit `TestCaseSource` so `dotnet test --filter …` works uniformly.
+- **Contrast with this repo:** `NanoFrameTest1.Tests` uses a single shared `BlazorAppFixture` + headed/headless Chrome for smoke vs BLE — simpler scope. PlaywrightMultiTest is the reference if you later want **discovered multi-project** browser runs, TRX logging, or the same pattern for other SpawnDev WASM libraries.
+
+See `PlaywrightMultiTest/CLAUDE.md` in that repo for run commands and constraints.
+
 - **[SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS)** — Full JS interop for Blazor WASM, including Web Bluetooth API wrappers.
 - **[nanoFramework Bluetooth Samples](https://github.com/nanoframework/Samples/tree/main/samples/Bluetooth)** — Official nanoFramework BLE examples.
 

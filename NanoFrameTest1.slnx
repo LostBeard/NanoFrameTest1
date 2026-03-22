@@ -7,4 +7,5 @@
     <File Path="README.md" />
   </Folder>
   <Project Path="BlazorWasmESP32S3WROOM/BlazorWasmESP32S3WROOM.csproj" />
+  <Project Path="NanoFrameTest1.Tests/NanoFrameTest1.Tests.csproj" />
 </Solution>

@@ -106,6 +106,11 @@ namespace NanoFrameTest1
             _commandChar = cmdResult.Characteristic;
             _commandChar.WriteRequested += OnCommandWriteRequested;
 
+            if (!_debug.Initialize(service))
+            {
+                return false;
+            }
+
             _debug.Log("[WiFi] Service initialized");
             return true;
         }

@@ -1,0 +1,16 @@
+{
+  "serialPort": "COM9",
+  "deploymentImage": [
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/mscorlib.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/nanoFramework.Runtime.Events.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/nanoFramework.Runtime.Native.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/nanoFramework.System.Collections.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/nanoFramework.System.Text.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/nanoFramework.Device.Bluetooth.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/System.Threading.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/System.IO.Streams.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/System.Net.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/System.Device.Wifi.pe",
+    "D:/users/tj/Projects/NanoFrameTest1/NanoFrameTest1/NanoFrameTest1/bin/Debug/NanoFrameTest1.pe"
+  ]
+}

@@ -8,49 +8,43 @@ using SpawnDev.BlazorJS.JSObjects;
 namespace BlazorWasmESP32S3WROOM.Services
 {
     /// <summary>
-    /// Manages the BLE connection to the ESP32-S3-WROOM device.
-    /// Uses SpawnDev.BlazorJS Web Bluetooth API wrappers.
+    /// Web Bluetooth client for nanoFramework firmware: WiFi provisioning + debug console
+    /// on one primary GATT service (<see cref="WifiServiceUuid"/>), matching <c>BleUuids</c> on the device.
     /// </summary>
     public class BleDeviceService : IAsyncDisposable
     {
         readonly BlazorJSRuntime _js;
 
-        // BLE objects — kept alive for the connection lifetime
         BluetoothDevice? _device;
         BluetoothRemoteGATTServer? _server;
+        BluetoothRemoteGATTService? _primaryService;
 
-        // Services
-        BluetoothRemoteGATTService? _wifiService;
-        BluetoothRemoteGATTService? _debugService;
-
-        // Characteristics
         BluetoothRemoteGATTCharacteristic? _wifiStatusChar;
         BluetoothRemoteGATTCharacteristic? _wifiScanChar;
         BluetoothRemoteGATTCharacteristic? _debugLogChar;
 
+        bool _scanNotificationsStarted;
+
         TextDecoder? _textDecoder;
 
-        // UUIDs — TEMPORARY: using Sample1 UUIDs for testing
-        const string WifiServiceUuid = "a7eedf2c-da87-4cb5-a9c5-5151c78b0057";
-        const string WifiStatusUuid = "a7eedf2c-da89-4cb5-a9c5-5151c78b0057";
+        const string WifiServiceUuid = "a0e4f2c0-0001-1000-8000-00805f9b34fb";
+        const string WifiStatusUuid = "a0e4f2c0-0001-0001-8000-00805f9b34fb";
         const string WifiScanUuid = "a0e4f2c0-0001-0002-8000-00805f9b34fb";
         const string WifiCredentialsUuid = "a0e4f2c0-0001-0003-8000-00805f9b34fb";
         const string WifiCommandUuid = "a0e4f2c0-0001-0004-8000-00805f9b34fb";
 
-        const string DebugServiceUuid = "a0e4f2c0-0003-1000-8000-00805f9b34fb";
         const string DebugLogOutputUuid = "a0e4f2c0-0003-0001-8000-00805f9b34fb";
         const string DebugCommandInputUuid = "a0e4f2c0-0003-0002-8000-00805f9b34fb";
 
-        // WiFi commands
         const byte WifiCmdConnect = 0x01;
         const byte WifiCmdDisconnect = 0x02;
         const byte WifiCmdForget = 0x03;
 
         public bool IsConnected => _server?.Connected == true;
+        public bool IsGattReady => _primaryService != null && _wifiStatusChar != null;
         public string? DeviceName => _device?.Name;
         public bool IsWebBluetoothSupported { get; private set; }
 
-        // Events
         public event Action? OnConnected;
         public event Action? OnDisconnected;
         public event Action<WifiStatus>? OnWifiStatusChanged;
@@ -61,11 +55,6 @@ namespace BlazorWasmESP32S3WROOM.Services
         {
             _js = js;
             _textDecoder = new TextDecoder();
-            CheckBluetoothSupport();
-        }
-
-        void CheckBluetoothSupport()
-        {
             using var navigator = _js.Get<Navigator>("navigator");
             using var bluetooth = navigator.Bluetooth;
             IsWebBluetoothSupported = bluetooth != null;
@@ -81,67 +70,185 @@ namespace BlazorWasmESP32S3WROOM.Services
             _device = await bluetooth.RequestDevice(new BluetoothDeviceOptions
             {
                 AcceptAllDevices = true,
-                OptionalServices = new string[] { WifiServiceUuid, DebugServiceUuid }
+                OptionalServices = new[] { WifiServiceUuid }
             });
 
             _device.OnGATTServerDisconnected += OnGATTDisconnected;
-            Console.WriteLine($"[BLE] Device selected: {_device.Name ?? "(no name)"}, connecting GATT...");
-            _server = await _device.GATT!.Connect();
-            Console.WriteLine($"[BLE] GATT connected: {_server.Connected}");
+            Console.WriteLine($"[BLE] Device selected: {_device.Name ?? "(no name)"}");
 
-            // === MINIMAL TEST: just try to get the WiFi service and read one characteristic ===
             try
             {
-                Console.WriteLine($"[BLE] Getting service: {WifiServiceUuid}");
-                _wifiService = await _server.GetPrimaryService(WifiServiceUuid);
-                Console.WriteLine("[BLE] Service found! Getting test characteristic...");
-                _wifiStatusChar = await _wifiService.GetCharacteristic(WifiStatusUuid);
-                Console.WriteLine("[BLE] Characteristic found! Reading value...");
-                using var testValue = await _wifiStatusChar.ReadValue();
-                var testText = _textDecoder!.Decode(testValue.Buffer);
-                Console.WriteLine($"[BLE] Read value: '{testText}'");
+                await EstablishGattSessionAsync();
+                Console.WriteLine($"[BLE] Connection complete. Server connected: {_server!.Connected}");
+                OnConnected?.Invoke();
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[BLE] Service test FAILED: {ex.Message}");
-                Console.WriteLine($"[BLE] Server still connected: {_server.Connected}");
+                await DisconnectAsync();
+                throw;
             }
+        }
 
-            Console.WriteLine($"[BLE] Connection complete. Server connected: {_server.Connected}");
+        /// <summary>
+        /// Reconnect GATT, discover service/characteristics, enable status + debug notify only.
+        /// WiFi scan notify is deferred until <see cref="ScanWifiNetworks"/> (fewer simultaneous CCCD writes — helps flaky ESP32 stacks).
+        /// </summary>
+        async Task EstablishGattSessionAsync()
+        {
+            const int serviceTimeoutMs = 28000;
+            Exception? last = null;
 
-            if (false) // temporarily disabled
+            for (var attempt = 0; attempt < 3; attempt++)
             {
+                try
+                {
+                    var gatt = _device!.GATT!;
+                    _server = await gatt.Connect();
+                    Console.WriteLine($"[BLE] GATT connected: {_server.Connected} (attempt {attempt + 1})");
+
+                    if (!_server.Connected)
+                        throw new InvalidOperationException("GATT server reports disconnected immediately after connect.");
+
+                    await Task.Delay(attempt == 0 ? 500 : 700);
+
+                    if (!_server.Connected)
+                    {
+                        Console.WriteLine("[BLE] Link dropped during settle delay; reconnecting…");
+                        continue;
+                    }
+
+                    _primaryService = await WithTimeout(
+                        _server.GetPrimaryService(WifiServiceUuid),
+                        serviceTimeoutMs,
+                        "GetPrimaryService(WiFi)");
+
+                    await Task.Delay(120);
+                    _wifiStatusChar = await WithTimeout(
+                        _primaryService.GetCharacteristic(WifiStatusUuid),
+                        15000,
+                        "GetCharacteristic(WiFi status)");
+                    await Task.Delay(80);
+                    _wifiScanChar = await WithTimeout(
+                        _primaryService.GetCharacteristic(WifiScanUuid),
+                        15000,
+                        "GetCharacteristic(WiFi scan)");
+                    await Task.Delay(80);
+                    _debugLogChar = await WithTimeout(
+                        _primaryService.GetCharacteristic(DebugLogOutputUuid),
+                        15000,
+                        "GetCharacteristic(Debug log)");
+
+                    _wifiStatusChar.OnCharacteristicValueChanged += OnWifiStatusNotification;
+                    _debugLogChar.OnCharacteristicValueChanged += OnDebugLogNotification;
+
+                    await _wifiStatusChar.StartNotifications();
+                    await Task.Delay(150);
+                    await _debugLogChar.StartNotifications();
+                    await Task.Delay(100);
+
+                    if (!_server.Connected)
+                        throw new InvalidOperationException("GATT disconnected after starting notifications.");
+
+                    using var initial = await WithTimeout(_wifiStatusChar.ReadValue(), 15000, "ReadValue(WiFi status)");
+                    ParseWifiStatusFromBuffer(initial.Buffer);
+
+                    _scanNotificationsStarted = false;
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    Console.WriteLine($"[BLE] Session attempt {attempt + 1} failed: {ex.Message}");
+                    await DisposePartialGattStateAsync();
+                    if (_server?.Connected == true)
+                    {
+                        try { _server.Disconnect(); } catch { /* best effort */ }
+                    }
+                    if (attempt < 2)
+                        await Task.Delay(800);
+                }
             }
 
-            OnConnected?.Invoke();
+            throw last ?? new InvalidOperationException("GATT session failed.");
+        }
+
+        async Task DisposePartialGattStateAsync()
+        {
+            if (_debugLogChar != null)
+            {
+                _debugLogChar.OnCharacteristicValueChanged -= OnDebugLogNotification;
+                if (_server?.Connected == true)
+                    try { await _debugLogChar.StopNotifications(); } catch { }
+                _debugLogChar.Dispose();
+                _debugLogChar = null;
+            }
+            if (_wifiStatusChar != null)
+            {
+                _wifiStatusChar.OnCharacteristicValueChanged -= OnWifiStatusNotification;
+                if (_server?.Connected == true)
+                    try { await _wifiStatusChar.StopNotifications(); } catch { }
+                _wifiStatusChar.Dispose();
+                _wifiStatusChar = null;
+            }
+            if (_wifiScanChar != null)
+            {
+                if (_scanNotificationsStarted)
+                    _wifiScanChar.OnCharacteristicValueChanged -= OnWifiScanNotification;
+                if (_scanNotificationsStarted && _server?.Connected == true)
+                    try { await _wifiScanChar.StopNotifications(); } catch { }
+                _wifiScanChar.Dispose();
+                _wifiScanChar = null;
+            }
+            _scanNotificationsStarted = false;
+            if (_primaryService != null)
+            {
+                _primaryService.Dispose();
+                _primaryService = null;
+            }
+        }
+
+        static async Task<T> WithTimeout<T>(Task<T> task, int milliseconds, string operation)
+        {
+            var delay = Task.Delay(milliseconds);
+            var completed = await Task.WhenAny(task, delay);
+            if (completed != task)
+                throw new TimeoutException($"{operation} timed out after {milliseconds} ms (GATT may have dropped).");
+            return await task;
         }
 
         public async Task DisconnectAsync()
         {
-            // Unsubscribe from notifications
             if (_debugLogChar != null)
             {
                 _debugLogChar.OnCharacteristicValueChanged -= OnDebugLogNotification;
-                if (_server?.Connected == true) try { await _debugLogChar.StopNotifications(); } catch { }
+                if (_server?.Connected == true)
+                    try { await _debugLogChar.StopNotifications(); } catch { }
                 _debugLogChar.Dispose();
                 _debugLogChar = null;
             }
             if (_wifiScanChar != null)
             {
-                _wifiScanChar.OnCharacteristicValueChanged -= OnWifiScanNotification;
-                if (_server?.Connected == true) try { await _wifiScanChar.StopNotifications(); } catch { }
+                if (_scanNotificationsStarted)
+                    _wifiScanChar.OnCharacteristicValueChanged -= OnWifiScanNotification;
+                if (_scanNotificationsStarted && _server?.Connected == true)
+                    try { await _wifiScanChar.StopNotifications(); } catch { }
                 _wifiScanChar.Dispose();
                 _wifiScanChar = null;
             }
+            _scanNotificationsStarted = false;
             if (_wifiStatusChar != null)
             {
                 _wifiStatusChar.OnCharacteristicValueChanged -= OnWifiStatusNotification;
-                if (_server?.Connected == true) try { await _wifiStatusChar.StopNotifications(); } catch { }
+                if (_server?.Connected == true)
+                    try { await _wifiStatusChar.StopNotifications(); } catch { }
                 _wifiStatusChar.Dispose();
                 _wifiStatusChar = null;
             }
-            if (_debugService != null) { _debugService.Dispose(); _debugService = null; }
-            if (_wifiService != null) { _wifiService.Dispose(); _wifiService = null; }
+            if (_primaryService != null)
+            {
+                _primaryService.Dispose();
+                _primaryService = null;
+            }
             if (_server != null)
             {
                 if (_server.Connected) _server.Disconnect();
@@ -156,27 +263,33 @@ namespace BlazorWasmESP32S3WROOM.Services
             }
         }
 
-        #region WiFi Operations
-
         public async Task ScanWifiNetworks()
         {
-            if (_wifiService == null) return;
-            using var scanChar = await _wifiService.GetCharacteristic(WifiScanUuid);
-            await scanChar.WriteValueWithoutResponse(new byte[] { 0x01 });
+            if (_wifiScanChar == null || _server?.Connected != true) return;
+
+            if (!_scanNotificationsStarted)
+            {
+                _wifiScanChar.OnCharacteristicValueChanged += OnWifiScanNotification;
+                await _wifiScanChar.StartNotifications();
+                _scanNotificationsStarted = true;
+                await Task.Delay(100);
+            }
+
+            await _wifiScanChar.WriteValueWithoutResponse(new byte[] { 0x01 });
         }
 
         public async Task SendWifiCredentials(string ssid, string password)
         {
-            if (_wifiService == null) return;
-            using var credChar = await _wifiService.GetCharacteristic(WifiCredentialsUuid);
+            if (_primaryService == null) return;
+            using var credChar = await _primaryService.GetCharacteristic(WifiCredentialsUuid);
             var payload = Encoding.UTF8.GetBytes($"{ssid}\n{password}");
             await credChar.WriteValueWithResponse(payload);
         }
 
         public async Task SendWifiCommand(byte command)
         {
-            if (_wifiService == null) return;
-            using var cmdChar = await _wifiService.GetCharacteristic(WifiCommandUuid);
+            if (_primaryService == null) return;
+            using var cmdChar = await _primaryService.GetCharacteristic(WifiCommandUuid);
             await cmdChar.WriteValueWithoutResponse(new byte[] { command });
         }
 
@@ -184,32 +297,21 @@ namespace BlazorWasmESP32S3WROOM.Services
         public Task DisconnectWifi() => SendWifiCommand(WifiCmdDisconnect);
         public Task ForgetWifi() => SendWifiCommand(WifiCmdForget);
 
-        #endregion
-
-        #region Debug Console
-
         public async Task SendDebugCommand(string command)
         {
-            if (_debugService == null) return;
-            using var cmdChar = await _debugService.GetCharacteristic(DebugCommandInputUuid);
+            if (_primaryService == null) return;
+            using var cmdChar = await _primaryService.GetCharacteristic(DebugCommandInputUuid);
             var payload = Encoding.UTF8.GetBytes(command);
             await cmdChar.WriteValueWithResponse(payload);
         }
 
-        #endregion
-
-        #region Event Handlers
-
-        void OnGATTDisconnected(Event e)
-        {
-            OnDisconnected?.Invoke();
-        }
+        void OnGATTDisconnected(Event e) => OnDisconnected?.Invoke();
 
         void OnWifiStatusNotification(Event e)
         {
             using var characteristic = e.TargetAs<BluetoothRemoteGATTCharacteristic>();
             using var value = characteristic.Value;
-            if (value != null) ParseWifiStatus(value);
+            if (value != null) ParseWifiStatusFromBuffer(value.Buffer);
         }
 
         void OnWifiScanNotification(Event e)
@@ -220,19 +322,15 @@ namespace BlazorWasmESP32S3WROOM.Services
 
             var text = _textDecoder!.Decode(value.Buffer);
             var networks = new List<WifiNetwork>();
-
             if (!string.IsNullOrEmpty(text))
             {
                 foreach (var line in text.Split('\n'))
                 {
                     var parts = line.Split('|');
                     if (parts.Length >= 2 && int.TryParse(parts[1], out var rssi))
-                    {
                         networks.Add(new WifiNetwork { Ssid = parts[0], Rssi = rssi });
-                    }
                 }
             }
-
             OnWifiScanResults?.Invoke(networks);
         }
 
@@ -241,36 +339,30 @@ namespace BlazorWasmESP32S3WROOM.Services
             using var characteristic = e.TargetAs<BluetoothRemoteGATTCharacteristic>();
             using var value = characteristic.Value;
             if (value == null) return;
-
             var message = _textDecoder!.Decode(value.Buffer);
             OnDebugLog?.Invoke(message);
         }
 
-        void ParseWifiStatus(DataView dataView)
+        void ParseWifiStatusFromBuffer(ArrayBuffer? buffer)
         {
-            // Format: [status_byte][ip_string]
+            if (buffer == null) return;
+            using var dataView = new DataView(buffer);
             if (dataView.ByteLength == 0) return;
 
             var statusByte = dataView.GetUint8(0);
             var ipAddress = "";
             if (dataView.ByteLength > 1)
             {
-                // Decode the IP string portion (bytes 1..N)
-                using var buffer = dataView.Buffer;
                 using var ipView = new DataView(buffer, 1);
                 ipAddress = _textDecoder!.Decode(ipView);
             }
 
-            var status = new WifiStatus
+            OnWifiStatusChanged?.Invoke(new WifiStatus
             {
                 State = (WifiConnectionState)statusByte,
                 IpAddress = ipAddress
-            };
-
-            OnWifiStatusChanged?.Invoke(status);
+            });
         }
-
-        #endregion
 
         public async ValueTask DisposeAsync()
         {
@@ -298,7 +390,6 @@ namespace BlazorWasmESP32S3WROOM.Services
         public string Ssid { get; set; } = "";
         public int Rssi { get; set; }
 
-        /// <summary>Signal strength as 0-4 bars.</summary>
         public int SignalBars => Rssi switch
         {
             >= -50 => 4,

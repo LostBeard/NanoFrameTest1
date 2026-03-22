@@ -1,7 +1,5 @@
 @page "/"
 @using BlazorWasmESP32S3WROOM.Services
-@using SpawnDev.BlazorJS
-@using SpawnDev.BlazorJS.JSObjects
 @implements IAsyncDisposable
 
 <PageTitle>ESP32-S3 Dashboard</PageTitle>
@@ -27,89 +25,65 @@ else
         <strong>BLE:</strong> @(_bleService.IsConnected ? $"Connected to {_bleService.DeviceName}" : "Disconnected")
     </div>
 
-    @if (_bleService.IsConnected)
+    @if (_bleService.IsConnected && _bleService.IsGattReady)
     {
-        <!-- WiFi Status -->
-        <div class="card mb-3">
-            <div class="card-header"><strong>WiFi Status</strong></div>
-            <div class="card-body">
-                <p>
-                    <strong>State:</strong>
-                    <span class="badge @WifiStatusBadgeClass">@_wifiStatus.State</span>
-                    @if (!string.IsNullOrEmpty(_wifiStatus.IpAddress))
-                    {
-                        <span class="ms-2">IP: <code>@_wifiStatus.IpAddress</code></span>
-                    }
-                </p>
-            </div>
-        </div>
-
-        <!-- WiFi Configuration -->
         <div class="card mb-3">
             <div class="card-header"><strong>WiFi Configuration</strong></div>
             <div class="card-body">
-                <div class="row g-2 mb-2">
-                    <div class="col-auto">
-                        <button class="btn btn-sm btn-outline-primary" @onclick="ScanWifi" disabled="@_scanning">
-                            @(_scanning ? "Scanning..." : "Scan Networks")
-                        </button>
-                    </div>
+                <div class="alert @WifiStatusAlertClass mb-3">
+                    <strong>Status:</strong> @_wifiStatus.State
+                    @if (!string.IsNullOrEmpty(_wifiStatus.IpAddress))
+                    {
+                        <span class="ms-2">IP: @_wifiStatus.IpAddress</span>
+                    }
+                </div>
+
+                <div class="mb-3">
+                    <button class="btn btn-outline-primary me-2" disabled="@_scanning" @onclick="ScanWifiAsync">
+                        @(_scanning ? "Scanning…" : "Scan networks")
+                    </button>
+                    <button class="btn btn-outline-warning me-2" @onclick="DisconnectWifiAsync">Disconnect WiFi</button>
+                    <button class="btn btn-outline-secondary" @onclick="ForgetWifiAsync">Forget credentials</button>
                 </div>
 
                 @if (_networks.Count > 0)
                 {
-                    <div class="list-group mb-3">
-                        @foreach (var network in _networks)
+                    <p class="text-muted small mb-2">Tap a network to use its SSID.</p>
+                    <ul class="list-group mb-3">
+                        @foreach (var n in _networks)
                         {
-                            <button type="button"
-                                    class="list-group-item list-group-item-action d-flex justify-content-between align-items-center @(network.Ssid == _ssid ? "active" : "")"
-                                    @onclick="() => SelectNetwork(network.Ssid)">
-                                @network.Ssid
-                                <span class="badge bg-secondary">@network.Rssi dBm (@(new string('|', network.SignalBars))@(new string('.', 4 - network.SignalBars)))</span>
-                            </button>
+                            <li class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                                style="cursor: pointer;"
+                                @onclick="() => SelectNetwork(n.Ssid)">
+                                <span>@n.Ssid</span>
+                                <span class="badge bg-secondary">@n.Rssi dBm (@n.SignalBars bars)</span>
+                            </li>
                         }
-                    </div>
+                    </ul>
                 }
 
-                <div class="row g-2 align-items-end">
-                    <div class="col-md-4">
+                <div class="row g-2 mb-2">
+                    <div class="col-md-6">
                         <label class="form-label">SSID</label>
-                        <input type="text" class="form-control" @bind="_ssid" placeholder="Network name" />
+                        <input class="form-control" @bind="_ssid" placeholder="Network name" />
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-6">
                         <label class="form-label">Password</label>
-                        <input type="password" class="form-control" @bind="_password" placeholder="Password" />
-                    </div>
-                    <div class="col-auto">
-                        <button class="btn btn-success" @onclick="ConnectWifi"
-                                disabled="@(string.IsNullOrWhiteSpace(_ssid))">
-                            Connect WiFi
-                        </button>
-                    </div>
-                    <div class="col-auto">
-                        <button class="btn btn-outline-warning" @onclick="DisconnectWifi">Disconnect WiFi</button>
+                        <input class="form-control" type="password" @bind="_password" placeholder="Password" />
                     </div>
                 </div>
+                <button class="btn btn-success" @onclick="ConnectWifiAsync">Connect to WiFi</button>
             </div>
         </div>
 
-        <!-- Debug Console -->
         <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between">
-                <strong>Debug Console</strong>
-                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearLog">Clear</button>
-            </div>
+            <div class="card-header"><strong>Debug Console</strong></div>
             <div class="card-body">
-                <div class="mb-2">
-                    <div class="input-group">
-                        <input type="text" class="form-control font-monospace" @bind="_debugCommand"
-                               @onkeydown="OnDebugKeyDown" placeholder="Type a command..." />
-                        <button class="btn btn-outline-primary" @onclick="SendDebugCommand">Send</button>
-                    </div>
+                <pre class="bg-dark text-light p-3 rounded small" style="max-height: 240px; overflow-y: auto; white-space: pre-wrap;">@_logText</pre>
+                <div class="input-group mt-2">
+                    <input class="form-control" @bind="_debugCommand" @onkeyup="OnDebugKeyUp" placeholder="Command…" />
+                    <button class="btn btn-primary" @onclick="SendDebugAsync">Send</button>
                 </div>
-                <pre class="bg-dark text-light p-2 rounded" style="max-height:300px;overflow-y:auto;font-size:0.85em;">@foreach (var line in _logLines)
-{@line
-}</pre>
             </div>
         </div>
     }
@@ -125,26 +99,64 @@ else
 
     WifiStatus _wifiStatus = new();
     List<WifiNetwork> _networks = new();
-    List<string> _logLines = new();
-
     string _ssid = "";
     string _password = "";
     string _debugCommand = "";
+    string _logText = "";
     string _error = "";
     bool _scanning;
 
+    string WifiStatusAlertClass => _wifiStatus.State switch
+    {
+        WifiConnectionState.Connected => "alert-success",
+        WifiConnectionState.Connecting => "alert-warning",
+        WifiConnectionState.Failed => "alert-danger",
+        _ => "alert-secondary"
+    };
+
     protected override void OnInitialized()
     {
-        _bleService.OnConnected += OnConnected;
-        _bleService.OnDisconnected += OnDisconnected;
+        _bleService.OnConnected += OnBleConnected;
+        _bleService.OnDisconnected += OnBleDisconnected;
         _bleService.OnWifiStatusChanged += OnWifiStatusChanged;
         _bleService.OnWifiScanResults += OnWifiScanResults;
         _bleService.OnDebugLog += OnDebugLog;
     }
 
+    void OnBleConnected() => InvokeAsync(StateHasChanged);
+    void OnBleDisconnected()
+    {
+        _networks.Clear();
+        _wifiStatus = new WifiStatus();
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnWifiStatusChanged(WifiStatus s)
+    {
+        _wifiStatus = s;
+        _scanning = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnWifiScanResults(List<WifiNetwork> list)
+    {
+        _networks = list;
+        _scanning = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnDebugLog(string line)
+    {
+        _logText += line + "\n";
+        if (_logText.Length > 16000)
+            _logText = _logText[^12000..];
+        InvokeAsync(StateHasChanged);
+    }
+
     async Task ConnectAsync()
     {
         _error = "";
+        _logText = "";
         try
         {
             await _bleService.ConnectAsync();
@@ -153,6 +165,7 @@ else
         {
             _error = $"Connection failed: {ex.Message}";
         }
+        StateHasChanged();
     }
 
     async Task DisconnectAsync()
@@ -161,7 +174,7 @@ else
         StateHasChanged();
     }
 
-    async Task ScanWifi()
+    async Task ScanWifiAsync()
     {
         _scanning = true;
         _error = "";
@@ -174,14 +187,12 @@ else
             _error = $"Scan failed: {ex.Message}";
             _scanning = false;
         }
+        StateHasChanged();
     }
 
-    void SelectNetwork(string ssid)
-    {
-        _ssid = ssid;
-    }
+    void SelectNetwork(string ssid) => _ssid = ssid;
 
-    async Task ConnectWifi()
+    async Task ConnectWifiAsync()
     {
         _error = "";
         try
@@ -193,86 +204,64 @@ else
         {
             _error = $"WiFi connect failed: {ex.Message}";
         }
+        StateHasChanged();
     }
 
-    async Task DisconnectWifi()
+    async Task DisconnectWifiAsync()
     {
-        try { await _bleService.DisconnectWifi(); }
-        catch (Exception ex) { _error = $"WiFi disconnect failed: {ex.Message}"; }
-    }
-
-    async Task SendDebugCommand()
-    {
-        if (string.IsNullOrWhiteSpace(_debugCommand)) return;
         try
         {
-            _logLines.Add($"> {_debugCommand}");
+            await _bleService.DisconnectWifi();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    async Task ForgetWifiAsync()
+    {
+        try
+        {
+            await _bleService.ForgetWifi();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    async Task SendDebugAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_debugCommand)) return;
+        _error = "";
+        try
+        {
             await _bleService.SendDebugCommand(_debugCommand);
             _debugCommand = "";
         }
         catch (Exception ex)
         {
-            _error = $"Command failed: {ex.Message}";
+            _error = ex.Message;
         }
-    }
-
-    async Task OnDebugKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter") await SendDebugCommand();
-    }
-
-    void ClearLog() => _logLines.Clear();
-
-    void OnConnected()
-    {
-        _logLines.Add("[Connected to ESP32]");
         StateHasChanged();
     }
 
-    void OnDisconnected()
+    async Task OnDebugKeyUp(KeyboardEventArgs e)
     {
-        _wifiStatus = new();
-        _networks.Clear();
-        _logLines.Add("[Disconnected from ESP32]");
-        StateHasChanged();
+        if (e.Key == "Enter")
+            await SendDebugAsync();
     }
-
-    void OnWifiStatusChanged(WifiStatus status)
-    {
-        _wifiStatus = status;
-        StateHasChanged();
-    }
-
-    void OnWifiScanResults(List<WifiNetwork> networks)
-    {
-        _networks = networks;
-        _scanning = false;
-        StateHasChanged();
-    }
-
-    void OnDebugLog(string message)
-    {
-        _logLines.Add(message);
-        // Keep log from growing unbounded
-        while (_logLines.Count > 500)
-            _logLines.RemoveAt(0);
-        StateHasChanged();
-    }
-
-    string WifiStatusBadgeClass => _wifiStatus.State switch
-    {
-        WifiConnectionState.Connected => "bg-success",
-        WifiConnectionState.Connecting => "bg-warning text-dark",
-        WifiConnectionState.Failed => "bg-danger",
-        _ => "bg-secondary"
-    };
 
     public async ValueTask DisposeAsync()
     {
-        _bleService.OnConnected -= OnConnected;
-        _bleService.OnDisconnected -= OnDisconnected;
+        _bleService.OnConnected -= OnBleConnected;
+        _bleService.OnDisconnected -= OnBleDisconnected;
         _bleService.OnWifiStatusChanged -= OnWifiStatusChanged;
         _bleService.OnWifiScanResults -= OnWifiScanResults;
         _bleService.OnDebugLog -= OnDebugLog;
+        await ValueTask.CompletedTask;
     }
 }

@@ -1,42 +1,29 @@
 using System;
 using System.Diagnostics;
-using System.Text;
 using nanoFramework.Device.Bluetooth;
 using nanoFramework.Device.Bluetooth.GenericAttributeProfile;
 
 namespace NanoFrameTest1
 {
     /// <summary>
-    /// BLE service that streams debug log output to connected clients and accepts text commands.
-    /// Replaces needing a serial monitor — debug output goes straight to the Blazor app.
+    /// Debug log + command characteristics on the same primary GATT service as WiFi
+    /// (single <see cref="GattServiceProvider"/> — required for nanoFramework / ESP32).
     /// </summary>
     public class DebugConsoleService
     {
         GattLocalCharacteristic _logOutputChar;
         GattLocalCharacteristic _commandInputChar;
         bool _hasSubscribers;
+        bool _initialized;
 
-        public GattServiceProvider ServiceProvider { get; private set; }
-
-        /// <summary>
-        /// Fired when a text command is received from the Blazor app.
-        /// </summary>
         public event CommandReceivedHandler CommandReceived;
         public delegate void CommandReceivedHandler(string command);
 
-        public bool Initialize()
+        /// <summary>
+        /// Adds debug characteristics to an existing primary service (typically the WiFi service).
+        /// </summary>
+        public bool Initialize(GattLocalService service)
         {
-            var result = GattServiceProvider.Create(BleUuids.DebugServiceUuid);
-            if (result.Error != BluetoothError.Success)
-            {
-                Debug.WriteLine("[DebugConsole] Failed to create service: " + result.Error);
-                return false;
-            }
-
-            ServiceProvider = result.ServiceProvider;
-            var service = ServiceProvider.Service;
-
-            // Log Output — notify only (ESP32 → app)
             var logParams = new GattLocalCharacteristicParameters
             {
                 CharacteristicProperties = GattCharacteristicProperties.Notify,
@@ -54,7 +41,6 @@ namespace NanoFrameTest1
                 _hasSubscribers = sender.SubscribedClients.Length > 0;
             };
 
-            // Command Input — write only (app → ESP32)
             var cmdParams = new GattLocalCharacteristicParameters
             {
                 CharacteristicProperties = GattCharacteristicProperties.Write | GattCharacteristicProperties.WriteWithoutResponse,
@@ -69,20 +55,16 @@ namespace NanoFrameTest1
             _commandInputChar = cmdResult.Characteristic;
             _commandInputChar.WriteRequested += OnCommandWriteRequested;
 
-            Debug.WriteLine("[DebugConsole] Service initialized");
+            _initialized = true;
+            Debug.WriteLine("[DebugConsole] Characteristics attached to primary service");
             return true;
         }
 
-        /// <summary>
-        /// Send a log message to all subscribed BLE clients.
-        /// Call this instead of Debug.WriteLine when you want output to reach the Blazor app.
-        /// </summary>
         public void Log(string message)
         {
             Debug.WriteLine(message);
-            if (!_hasSubscribers) return;
+            if (!_initialized || !_hasSubscribers) return;
 
-            // BLE MTU is typically 20-512 bytes. Truncate if needed.
             if (message.Length > 500)
             {
                 message = message.Substring(0, 497) + "...";
