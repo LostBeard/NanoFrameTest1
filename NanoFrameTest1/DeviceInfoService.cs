@@ -1,8 +1,8 @@
 using System;
 using System.Diagnostics;
-using System.Reflection;
 using nanoFramework.Device.Bluetooth;
 using nanoFramework.Device.Bluetooth.GenericAttributeProfile;
+using nanoFramework.Runtime.Native;
 
 namespace NanoFrameTest1
 {

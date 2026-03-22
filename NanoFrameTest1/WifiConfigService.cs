@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using nanoFramework.Device.Bluetooth;
 using nanoFramework.Device.Bluetooth.GenericAttributeProfile;
+using nanoFramework.Networking;
 
 namespace NanoFrameTest1
 {
@@ -235,7 +236,14 @@ namespace NanoFrameTest1
 
             try
             {
-                var wifiResult = WifiNetworkHelper.ConnectDhcp(_storedSsid, _storedPassword, requiresDateTime: false, token: new CancellationTokenSource(15000).Token);
+                var cts = new CancellationTokenSource(15000);
+                var wifiResult = WifiNetworkHelper.ConnectDhcp(
+                    _storedSsid,
+                    _storedPassword,
+                    WifiReconnectionKind.Automatic,
+                    requiresDateTime: false,
+                    wifiAdapterId: 0,
+                    token: cts.Token);
 
                 if (wifiResult)
                 {

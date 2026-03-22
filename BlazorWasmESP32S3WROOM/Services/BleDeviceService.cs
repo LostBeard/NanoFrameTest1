@@ -30,9 +30,9 @@ namespace BlazorWasmESP32S3WROOM.Services
 
         TextDecoder? _textDecoder;
 
-        // UUIDs — must match the ESP32 firmware (BleUuids.cs)
-        const string WifiServiceUuid = "a0e4f2c0-0001-1000-8000-00805f9b34fb";
-        const string WifiStatusUuid = "a0e4f2c0-0001-0001-8000-00805f9b34fb";
+        // UUIDs — TEMPORARY: using Sample1 UUIDs for testing
+        const string WifiServiceUuid = "a7eedf2c-da87-4cb5-a9c5-5151c78b0057";
+        const string WifiStatusUuid = "a7eedf2c-da89-4cb5-a9c5-5151c78b0057";
         const string WifiScanUuid = "a0e4f2c0-0001-0002-8000-00805f9b34fb";
         const string WifiCredentialsUuid = "a0e4f2c0-0001-0003-8000-00805f9b34fb";
         const string WifiCommandUuid = "a0e4f2c0-0001-0004-8000-00805f9b34fb";
@@ -80,55 +80,37 @@ namespace BlazorWasmESP32S3WROOM.Services
 
             _device = await bluetooth.RequestDevice(new BluetoothDeviceOptions
             {
-                Filters = new BluetoothDeviceFilter[]
-                {
-                    new() { Services = new string[] { WifiServiceUuid } }
-                },
-                OptionalServices = new string[] { DebugServiceUuid }
+                AcceptAllDevices = true,
+                OptionalServices = new string[] { WifiServiceUuid, DebugServiceUuid }
             });
 
             _device.OnGATTServerDisconnected += OnGATTDisconnected;
+            Console.WriteLine($"[BLE] Device selected: {_device.Name ?? "(no name)"}, connecting GATT...");
             _server = await _device.GATT!.Connect();
+            Console.WriteLine($"[BLE] GATT connected: {_server.Connected}");
 
-            // Connect to WiFi Config service
+            // === MINIMAL TEST: just try to get the WiFi service and read one characteristic ===
             try
             {
+                Console.WriteLine($"[BLE] Getting service: {WifiServiceUuid}");
                 _wifiService = await _server.GetPrimaryService(WifiServiceUuid);
+                Console.WriteLine("[BLE] Service found! Getting test characteristic...");
                 _wifiStatusChar = await _wifiService.GetCharacteristic(WifiStatusUuid);
-                _wifiStatusChar.OnCharacteristicValueChanged += OnWifiStatusNotification;
-                await _wifiStatusChar.StartNotifications();
-
-                _wifiScanChar = await _wifiService.GetCharacteristic(WifiScanUuid);
-                _wifiScanChar.OnCharacteristicValueChanged += OnWifiScanNotification;
-                await _wifiScanChar.StartNotifications();
+                Console.WriteLine("[BLE] Characteristic found! Reading value...");
+                using var testValue = await _wifiStatusChar.ReadValue();
+                var testText = _textDecoder!.Decode(testValue.Buffer);
+                Console.WriteLine($"[BLE] Read value: '{testText}'");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[BLE] WiFi service connect warning: {ex.Message}");
+                Console.WriteLine($"[BLE] Service test FAILED: {ex.Message}");
+                Console.WriteLine($"[BLE] Server still connected: {_server.Connected}");
             }
 
-            // Connect to Debug Console service
-            try
-            {
-                _debugService = await _server.GetPrimaryService(DebugServiceUuid);
-                _debugLogChar = await _debugService.GetCharacteristic(DebugLogOutputUuid);
-                _debugLogChar.OnCharacteristicValueChanged += OnDebugLogNotification;
-                await _debugLogChar.StartNotifications();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[BLE] Debug service connect warning: {ex.Message}");
-            }
+            Console.WriteLine($"[BLE] Connection complete. Server connected: {_server.Connected}");
 
-            // Read initial WiFi status
-            if (_wifiStatusChar != null)
+            if (false) // temporarily disabled
             {
-                try
-                {
-                    using var value = await _wifiStatusChar.ReadValue();
-                    ParseWifiStatus(value);
-                }
-                catch { }
             }
 
             OnConnected?.Invoke();
